@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.db
+*.db-*
+.env
+.tools/
+infra/**/.terraform/
+*.tfstate*
+*.tfplan
+infra/backend.hcl
+infra/bootstrap/backend.tf
+reports/
+.coverage
+.pytest_cache/
+screenshots/
+*.zip

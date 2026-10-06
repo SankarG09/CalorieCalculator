@@ -1,0 +1,16 @@
+steps:
+- bash: |
+    set -euo pipefail
+    dir="$AGENT_TEMPDIRECTORY/daily-calculator-terraform"
+    mkdir -p "$dir" && cd "$dir"
+    archive="terraform_${TF_VERSION}_linux_amd64.zip"
+    base="https://releases.hashicorp.com/terraform/${TF_VERSION}"
+    curl -fsSLo "$archive" "$base/$archive"
+    curl -fsSLo checksums "$base/terraform_${TF_VERSION}_SHA256SUMS"
+    grep " ${archive}$" checksums | sha256sum -c -
+    unzip -o "$archive" terraform && chmod +x terraform
+    echo "##vso[task.prependpath]$dir"
+    ./terraform version
+  displayName: Install checksum-verified Terraform
+  env:
+    TF_VERSION: $(terraformVersion)

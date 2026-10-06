@@ -1,0 +1,115 @@
+name: daily-calculator-$(Date:yyyyMMdd).$(Rev:r)
+parameters:
+- name: deployAzure
+  displayName: Deploy to Azure (requires configured service connection and backend)
+  type: boolean
+  default: false
+trigger:
+  batch: true
+  branches:
+    include: [main, 'feature/*', 'codex/*']
+pool:
+  vmImage: ubuntu-latest
+variables:
+  pythonVersion: '3.12'
+  terraformVersion: '1.9.8'
+stages:
+- stage: Validate
+  jobs:
+  - job: Source
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+    - bash: python -m compileall -q app.py catalog.py scripts tests && node --check static/app.js
+      displayName: Check source syntax
+- stage: Test
+  dependsOn: Validate
+  jobs:
+  - job: ApplicationTests
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+    - bash: |
+        python -m pip install -r requirements-dev.txt
+        mkdir -p reports
+        python -m pytest tests -v --junitxml=reports/tests.xml --cov=app --cov-report=xml:reports/coverage.xml
+      displayName: Test calculator and diary
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: reports/tests.xml
+- stage: Build
+  dependsOn: Test
+  jobs:
+  - job: Package
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+    - bash: python scripts/package.py "$(Build.ArtifactStagingDirectory)/application" --commit "$(Build.SourceVersion)" --build "$(Build.BuildId)"
+    - publish: $(Build.ArtifactStagingDirectory)/application
+      artifact: application
+- ${{ if eq(parameters.deployAzure, true) }}:
+  - stage: Infrastructure
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+    - job: Apply
+      steps:
+      - template: pipelines/templates/install-terraform.yml
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            source scripts/terraform-auth.sh
+            terraform -chdir=infra init -input=false -backend-config="resource_group_name=$STATE_RESOURCE_GROUP" -backend-config="storage_account_name=$STATE_STORAGE_ACCOUNT" -backend-config="container_name=tfstate" -backend-config="key=daily-calculator/app.tfstate"
+            terraform -chdir=infra plan -input=false -out=deployment.tfplan
+            terraform -chdir=infra apply -input=false deployment.tfplan
+        env:
+          SUBSCRIPTION_ID: $(subscriptionId)
+          APP_NAME: $(appName)
+          AZURE_LOCATION: $(azureLocation)
+          STATE_RESOURCE_GROUP: $(stateResourceGroup)
+          STATE_STORAGE_ACCOUNT: $(stateStorageAccount)
+  - stage: Release
+    dependsOn: Infrastructure
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+    - job: Deploy
+      steps:
+      - download: current
+        artifact: application
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            cd "$(Pipeline.Workspace)/application"
+            sha256sum -c app.zip.sha256
+            az webapp deploy --resource-group "${APP_NAME}-rg" --name "$APP_NAME" --src-path app.zip --type zip
+        env:
+          APP_NAME: $(appName)
+  - stage: Verify
+    dependsOn: Release
+    jobs:
+    - job: SmokeTest
+      steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(pythonVersion)
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            host=$(az webapp show --resource-group "${APP_NAME}-rg" --name "$APP_NAME" --query defaultHostName -o tsv)
+            python scripts/smoke.py "https://$host"
+        env:
+          APP_NAME: $(appName)

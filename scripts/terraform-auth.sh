@@ -1,0 +1,11 @@
+# Source this file in AzureCLI@2 after addSpnToEnvironment is enabled. Do not enable tracing.
+: "${servicePrincipalId:?A federated Azure service connection is required}"
+: "${tenantId:?Missing Azure tenant}"
+: "${idToken:?Service connection must use workload identity federation}"
+: "${SUBSCRIPTION_ID:?Missing subscriptionId}"
+: "${APP_NAME:?Missing appName}"
+: "${AZURE_LOCATION:?Missing azureLocation}"
+: "${STATE_RESOURCE_GROUP:?Missing stateResourceGroup}"
+: "${STATE_STORAGE_ACCOUNT:?Missing stateStorageAccount}"
+export ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId" ARM_SUBSCRIPTION_ID="$SUBSCRIPTION_ID" ARM_USE_OIDC=true ARM_OIDC_TOKEN="$idToken"
+export TF_VAR_subscription_id="$SUBSCRIPTION_ID" TF_VAR_app_name="$APP_NAME" TF_VAR_location="$AZURE_LOCATION"
